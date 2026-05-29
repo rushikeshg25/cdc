@@ -4,12 +4,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/rushikeshg25/cdc/internal/config"
+	"github.com/rushikeshg25/cdc/internal/event"
 	"github.com/rushikeshg25/cdc/internal/replication"
 )
 
@@ -57,6 +59,16 @@ func run(cfg config.Config) error {
 		fmt.Printf("slot %q already exists, reusing\n", cfg.SlotName)
 	}
 
+	// For now, log each decoded event as JSON. Phase 4 swaps this for a file sink.
+	logEvent := func(ev event.ChangeEvent) error {
+		b, err := json.Marshal(ev)
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(b))
+		return nil
+	}
+
 	// 0 = resume from the slot's confirmed position.
-	return replication.Stream(ctx, conn, cfg.SlotName, cfg.Publication, 0)
+	return replication.Stream(ctx, conn, cfg.SlotName, cfg.Publication, 0, logEvent)
 }

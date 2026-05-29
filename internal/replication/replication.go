@@ -13,7 +13,12 @@ import (
 	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
+	"github.com/rushikeshg25/cdc/internal/decode"
+	"github.com/rushikeshg25/cdc/internal/event"
 )
+
+// Handler consumes one decoded change event. Returning an error stops the stream.
+type Handler func(event.ChangeEvent) error
 
 // standbyTimeout is how often we proactively report our flushed LSN back to the server.
 // Without this feedback Postgres would retain WAL indefinitely (and eventually drop us
@@ -80,7 +85,7 @@ func EnsureSlot(ctx context.Context, conn *pgconn.PgConn, slotName string) (crea
 // sending LSN feedback come in later commits.
 //
 // startLSN of 0 tells Postgres to resume from the slot's confirmed position.
-func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, startLSN pglogrepl.LSN) error {
+func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, startLSN pglogrepl.LSN, handle Handler) error {
 	// pgoutput needs the protocol version and which publication's tables to stream.
 	pluginArgs := []string{
 		"proto_version '1'",
@@ -93,6 +98,7 @@ func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, 
 	}
 	log.Printf("streaming slot=%s publication=%s from %s", slot, publication, startLSN)
 
+	dec := decode.New()
 	// clientXLogPos is the furthest WAL position we've processed; it's what we report back.
 	clientXLogPos := startLSN
 	nextStandbyDeadline := time.Now().Add(standbyTimeout)
@@ -147,7 +153,15 @@ func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, 
 			if err != nil {
 				return fmt.Errorf("parse XLogData: %w", err)
 			}
-			log.Printf("XLogData walStart=%s %d bytes", xld.WALStart, len(xld.WALData))
+			ev, err := dec.Process(xld.WALStart, xld.WALData)
+			if err != nil {
+				return err
+			}
+			if ev != nil {
+				if err := handle(*ev); err != nil {
+					return fmt.Errorf("handle event: %w", err)
+				}
+			}
 			// Advance past the bytes we just consumed.
 			clientXLogPos = xld.WALStart + pglogrepl.LSN(len(xld.WALData))
 
