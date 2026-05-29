@@ -24,7 +24,7 @@ func Parse(args []string) (Config, error) {
 	fs := flag.NewFlagSet("cdc", flag.ContinueOnError)
 
 	var c Config
-	fs.StringVar(&c.DSN, "dsn", "postgres://localhost:5432/cdc_demo", "Postgres connection string")
+	fs.StringVar(&c.DSN, "dsn", "postgres://cdc:cdc@localhost:5433/cdc_demo?sslmode=disable", "Postgres connection string")
 	fs.StringVar(&c.SlotName, "slot", "cdc_slot", "logical replication slot name")
 	fs.StringVar(&c.Publication, "publication", "cdc_pub", "publication to stream")
 	fs.StringVar(&c.OutputPath, "output", "events.jsonl", "JSONL output file for change events")

@@ -3,10 +3,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	"github.com/rushikeshg25/cdc/internal/config"
+	"github.com/rushikeshg25/cdc/internal/replication"
 )
 
 func main() {
@@ -16,6 +18,21 @@ func main() {
 		os.Exit(2)
 	}
 
-	fmt.Printf("cdc config: dsn=%s slot=%s publication=%s output=%s verbose=%t\n",
-		cfg.DSN, cfg.SlotName, cfg.Publication, cfg.OutputPath, cfg.Verbose)
+	if err := run(cfg); err != nil {
+		fmt.Fprintln(os.Stderr, "cdc:", err)
+		os.Exit(1)
+	}
+}
+
+func run(cfg config.Config) error {
+	ctx := context.Background()
+
+	conn, err := replication.Connect(ctx, cfg.DSN)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(ctx)
+
+	fmt.Printf("connected in replication mode (server pid %d)\n", conn.PID())
+	return nil
 }

@@ -17,7 +17,8 @@ services:
       POSTGRES_PASSWORD: cdc
       POSTGRES_DB: cdc_demo
     ports:
-      - "5432:5432"
+      # Host 5433 to avoid clashing with a local Postgres on 5432.
+      - "5433:5432"
     volumes:
       # Runs once on first init (empty data dir): creates the publication.
       - ./scripts/init_pg.sql:/docker-entrypoint-initdb.d/init_pg.sql:ro

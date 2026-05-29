@@ -5,7 +5,7 @@
 # and the publication is created by scripts/init_pg.sql on first init.
 #
 # Connection string for the cdc binary:
-#   postgres://cdc:cdc@localhost:5432/cdc_demo
+#   postgres://cdc:cdc@localhost:5433/cdc_demo?sslmode=disable
 set -euo pipefail
 
 echo "==> Starting Postgres container"
@@ -20,6 +20,6 @@ done
 docker inspect -f 'health: {{.State.Health.Status}}' cdc_postgres
 
 echo
-echo "Ready. Connect with: postgres://cdc:cdc@localhost:5432/cdc_demo"
+echo "Ready. Connect with: postgres://cdc:cdc@localhost:5433/cdc_demo?sslmode=disable"
 echo "Tip: for full before-images on UPDATE/DELETE, set:"
 echo "     ALTER TABLE <table> REPLICA IDENTITY FULL;"
