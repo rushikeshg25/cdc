@@ -80,6 +80,18 @@ func (d *Decoder) Process(lsn pglogrepl.LSN, walData []byte) (*event.ChangeEvent
 		ev.After = tupleToMap(rel, m.NewTuple)
 		return &ev, nil
 
+	case *pglogrepl.DeleteMessage:
+		rel, ok := d.relations[m.RelationID]
+		if !ok {
+			return nil, fmt.Errorf("delete references unknown relation %d", m.RelationID)
+		}
+		ev := d.newEvent(event.OpDelete, rel, lsn)
+		// OldTuple holds the deleted row's key (or full row under REPLICA IDENTITY FULL).
+		if m.OldTuple != nil {
+			ev.Before = tupleToMap(rel, m.OldTuple)
+		}
+		return &ev, nil
+
 	default:
 		// Update/Delete/Truncate handled in later commits.
 		return nil, nil
