@@ -153,12 +153,12 @@ func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, 
 			if err != nil {
 				return fmt.Errorf("parse XLogData: %w", err)
 			}
-			ev, err := dec.Process(xld.WALStart, xld.WALData)
+			events, err := dec.Process(xld.WALStart, xld.WALData)
 			if err != nil {
 				return err
 			}
-			if ev != nil {
-				if err := handle(*ev); err != nil {
+			for _, ev := range events {
+				if err := handle(ev); err != nil {
 					return fmt.Errorf("handle event: %w", err)
 				}
 			}

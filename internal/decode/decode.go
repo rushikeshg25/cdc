@@ -36,10 +36,10 @@ func New() *Decoder {
 	return &Decoder{relations: make(map[uint32]*pglogrepl.RelationMessage)}
 }
 
-// Process decodes a single XLogData payload. It returns a ChangeEvent for row changes
-// (insert/update/delete), or nil for framing messages (begin/relation/commit) that only
-// update internal state. lsn is the WAL position of this payload.
-func (d *Decoder) Process(lsn pglogrepl.LSN, walData []byte) (*event.ChangeEvent, error) {
+// Process decodes a single XLogData payload. It returns change events for row changes
+// (insert/update/delete, and one per table for truncate), or nil for framing messages
+// (begin/relation/commit) that only update internal state. lsn is the WAL position.
+func (d *Decoder) Process(lsn pglogrepl.LSN, walData []byte) ([]event.ChangeEvent, error) {
 	msg, err := pglogrepl.Parse(walData)
 	if err != nil {
 		return nil, fmt.Errorf("parse logical message: %w", err)
@@ -49,7 +49,7 @@ func (d *Decoder) Process(lsn pglogrepl.LSN, walData []byte) (*event.ChangeEvent
 
 // handle dispatches on an already-parsed pgoutput message. Split from Process so the
 // decoding logic can be tested with constructed messages, no live server needed.
-func (d *Decoder) handle(lsn pglogrepl.LSN, msg pglogrepl.Message) (*event.ChangeEvent, error) {
+func (d *Decoder) handle(lsn pglogrepl.LSN, msg pglogrepl.Message) ([]event.ChangeEvent, error) {
 	switch m := msg.(type) {
 	case *pglogrepl.BeginMessage:
 		// Begin carries the transaction id and its commit timestamp up front.
@@ -73,7 +73,7 @@ func (d *Decoder) handle(lsn pglogrepl.LSN, msg pglogrepl.Message) (*event.Chang
 		}
 		ev := d.newEvent(event.OpInsert, rel, lsn)
 		ev.After = tupleToMap(rel, m.Tuple)
-		return &ev, nil
+		return []event.ChangeEvent{ev}, nil
 
 	case *pglogrepl.UpdateMessage:
 		rel, ok := d.relations[m.RelationID]
@@ -86,7 +86,7 @@ func (d *Decoder) handle(lsn pglogrepl.LSN, msg pglogrepl.Message) (*event.Chang
 			ev.Before = tupleToMap(rel, m.OldTuple)
 		}
 		ev.After = tupleToMap(rel, m.NewTuple)
-		return &ev, nil
+		return []event.ChangeEvent{ev}, nil
 
 	case *pglogrepl.DeleteMessage:
 		rel, ok := d.relations[m.RelationID]
@@ -98,10 +98,21 @@ func (d *Decoder) handle(lsn pglogrepl.LSN, msg pglogrepl.Message) (*event.Chang
 		if m.OldTuple != nil {
 			ev.Before = tupleToMap(rel, m.OldTuple)
 		}
-		return &ev, nil
+		return []event.ChangeEvent{ev}, nil
+
+	case *pglogrepl.TruncateMessage:
+		// One TRUNCATE can target several tables; emit a truncate event per known table.
+		var evs []event.ChangeEvent
+		for _, relID := range m.RelationIDs {
+			rel, ok := d.relations[relID]
+			if !ok {
+				continue // no Relation seen for it yet; nothing to name
+			}
+			evs = append(evs, d.newEvent(event.OpTruncate, rel, lsn))
+		}
+		return evs, nil
 
 	default:
-		// Update/Delete/Truncate handled in later commits.
 		return nil, nil
 	}
 }

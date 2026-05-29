@@ -96,6 +96,18 @@ func feedBeginRelation(t *testing.T, d *Decoder) {
 	}
 }
 
+// one asserts the decoder returned exactly one event and returns it.
+func one(t *testing.T, evs []event.ChangeEvent, err error) event.ChangeEvent {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if len(evs) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(evs))
+	}
+	return evs[0]
+}
+
 func TestHandleInsert(t *testing.T) {
 	d := New()
 	feedBeginRelation(t, d)
@@ -104,13 +116,8 @@ func TestHandleInsert(t *testing.T) {
 		RelationID: 1,
 		Tuple:      &pglogrepl.TupleData{ColumnNum: 2, Columns: []*pglogrepl.TupleDataColumn{textCol("1"), textCol("ada")}},
 	}
-	ev, err := d.handle(pglogrepl.LSN(16), ins)
-	if err != nil {
-		t.Fatalf("insert: %v", err)
-	}
-	if ev == nil {
-		t.Fatal("expected event, got nil")
-	}
+	evs, err := d.handle(pglogrepl.LSN(16), ins)
+	ev := one(t, evs, err)
 	if ev.Op != event.OpInsert || ev.Table != "users" || ev.Xid != 99 {
 		t.Errorf("unexpected event header: %+v", ev)
 	}
@@ -132,10 +139,8 @@ func TestHandleUpdateAndDelete(t *testing.T) {
 		OldTuple:     &pglogrepl.TupleData{ColumnNum: 2, Columns: []*pglogrepl.TupleDataColumn{textCol("1"), textCol("ada")}},
 		NewTuple:     &pglogrepl.TupleData{ColumnNum: 2, Columns: []*pglogrepl.TupleDataColumn{textCol("1"), textCol("ada2")}},
 	}
-	ev, err := d.handle(0, upd)
-	if err != nil {
-		t.Fatalf("update: %v", err)
-	}
+	evs, err := d.handle(0, upd)
+	ev := one(t, evs, err)
 	if ev.Op != event.OpUpdate ||
 		ev.Before["name"] != "ada" || ev.After["name"] != "ada2" {
 		t.Errorf("unexpected update event: %+v", ev)
@@ -146,12 +151,25 @@ func TestHandleUpdateAndDelete(t *testing.T) {
 		OldTupleType: pglogrepl.DeleteMessageTupleTypeOld,
 		OldTuple:     &pglogrepl.TupleData{ColumnNum: 2, Columns: []*pglogrepl.TupleDataColumn{textCol("1"), textCol("ada2")}},
 	}
-	ev, err = d.handle(0, del)
-	if err != nil {
-		t.Fatalf("delete: %v", err)
-	}
+	evs, err = d.handle(0, del)
+	ev = one(t, evs, err)
 	if ev.Op != event.OpDelete || ev.Before["id"] != int64(1) || ev.After != nil {
 		t.Errorf("unexpected delete event: %+v", ev)
+	}
+}
+
+func TestHandleTruncate(t *testing.T) {
+	d := New()
+	feedBeginRelation(t, d) // caches relation id 1 (public.users)
+
+	tr := &pglogrepl.TruncateMessage{RelationNum: 2, RelationIDs: []uint32{1, 404}}
+	evs, err := d.handle(0, tr)
+	if err != nil {
+		t.Fatalf("truncate: %v", err)
+	}
+	// id 404 is unknown and skipped; only the cached relation produces an event.
+	if len(evs) != 1 || evs[0].Op != event.OpTruncate || evs[0].Table != "users" {
+		t.Errorf("unexpected truncate events: %+v", evs)
 	}
 }
 
