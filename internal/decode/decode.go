@@ -58,8 +58,53 @@ func (d *Decoder) Process(lsn pglogrepl.LSN, walData []byte) (*event.ChangeEvent
 		d.commitTime = time.Time{}
 		return nil, nil
 
+	case *pglogrepl.InsertMessage:
+		rel, ok := d.relations[m.RelationID]
+		if !ok {
+			return nil, fmt.Errorf("insert references unknown relation %d", m.RelationID)
+		}
+		ev := d.newEvent(event.OpInsert, rel, lsn)
+		ev.After = tupleToMap(rel, m.Tuple)
+		return &ev, nil
+
 	default:
-		// Insert/Update/Delete/Truncate handled in later commits.
+		// Update/Delete/Truncate handled in later commits.
 		return nil, nil
 	}
+}
+
+// newEvent builds a ChangeEvent stamped with the current relation and transaction context.
+func (d *Decoder) newEvent(op event.Op, rel *pglogrepl.RelationMessage, lsn pglogrepl.LSN) event.ChangeEvent {
+	return event.ChangeEvent{
+		Op:         op,
+		Schema:     rel.Namespace,
+		Table:      rel.RelationName,
+		LSN:        lsn.String(),
+		Xid:        d.xid,
+		CommitTime: d.commitTime,
+	}
+}
+
+// tupleToMap resolves a tuple's positional column values against the relation's column
+// names. Values are kept as strings here (pgoutput sends text format); typed conversion is
+// added in a later commit. Unchanged TOASTed columns ('u') are omitted since their value
+// isn't sent; NULLs map to nil.
+func tupleToMap(rel *pglogrepl.RelationMessage, tup *pglogrepl.TupleData) map[string]any {
+	if tup == nil {
+		return nil
+	}
+	out := make(map[string]any, len(tup.Columns))
+	for i, col := range tup.Columns {
+		name := rel.Columns[i].Name
+		switch col.DataType {
+		case pglogrepl.TupleDataTypeNull:
+			out[name] = nil
+		case pglogrepl.TupleDataTypeToast:
+			// Value unchanged and not transmitted; leave it out.
+			continue
+		default: // text (and binary, if ever)
+			out[name] = string(col.Data)
+		}
+	}
+	return out
 }
