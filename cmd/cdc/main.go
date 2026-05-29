@@ -41,5 +41,15 @@ func run(cfg config.Config) error {
 	}
 	fmt.Printf("system: id=%s timeline=%d db=%s currentWAL=%s\n",
 		sys.SystemID, sys.Timeline, sys.DBName, sys.XLogPos)
+
+	created, err := replication.EnsureSlot(ctx, conn, cfg.SlotName)
+	if err != nil {
+		return err
+	}
+	if created {
+		fmt.Printf("slot %q created\n", cfg.SlotName)
+	} else {
+		fmt.Printf("slot %q already exists, reusing\n", cfg.SlotName)
+	}
 	return nil
 }
