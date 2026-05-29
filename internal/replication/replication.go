@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -27,4 +28,15 @@ func Connect(ctx context.Context, dsn string) (*pgconn.PgConn, error) {
 		return nil, fmt.Errorf("connect (replication mode): %w", err)
 	}
 	return conn, nil
+}
+
+// IdentifySystem runs the IDENTIFY_SYSTEM replication command, which reports the server's
+// system identifier, current timeline, current WAL position (LSN), and database name. It's
+// a cheap way to confirm the replication connection works and to see where the WAL is now.
+func IdentifySystem(ctx context.Context, conn *pgconn.PgConn) (pglogrepl.IdentifySystemResult, error) {
+	sys, err := pglogrepl.IdentifySystem(ctx, conn)
+	if err != nil {
+		return pglogrepl.IdentifySystemResult{}, fmt.Errorf("IDENTIFY_SYSTEM: %w", err)
+	}
+	return sys, nil
 }

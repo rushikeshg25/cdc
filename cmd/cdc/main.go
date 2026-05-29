@@ -34,5 +34,12 @@ func run(cfg config.Config) error {
 	defer conn.Close(ctx)
 
 	fmt.Printf("connected in replication mode (server pid %d)\n", conn.PID())
+
+	sys, err := replication.IdentifySystem(ctx, conn)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("system: id=%s timeline=%d db=%s currentWAL=%s\n",
+		sys.SystemID, sys.Timeline, sys.DBName, sys.XLogPos)
 	return nil
 }
