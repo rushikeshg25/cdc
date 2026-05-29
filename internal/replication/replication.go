@@ -7,9 +7,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgproto3"
 )
 
 // outputPlugin is the logical decoding plugin we stream through. pgoutput is built in.
@@ -64,4 +66,56 @@ func EnsureSlot(ctx context.Context, conn *pgconn.PgConn, slotName string) (crea
 		return false, nil
 	}
 	return false, fmt.Errorf("create replication slot %q: %w", slotName, err)
+}
+
+// Stream issues START_REPLICATION, which switches the socket into the bidirectional
+// CopyBoth state, then loops receiving messages from the server. For now it just logs the
+// kind of each message: keepalives ('k') and WAL data ('w'). Decoding the WAL payload and
+// sending LSN feedback come in later commits.
+//
+// startLSN of 0 tells Postgres to resume from the slot's confirmed position.
+func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, startLSN pglogrepl.LSN) error {
+	// pgoutput needs the protocol version and which publication's tables to stream.
+	pluginArgs := []string{
+		"proto_version '1'",
+		fmt.Sprintf("publication_names '%s'", publication),
+	}
+	err := pglogrepl.StartReplication(ctx, conn, slot, startLSN,
+		pglogrepl.StartReplicationOptions{PluginArgs: pluginArgs})
+	if err != nil {
+		return fmt.Errorf("START_REPLICATION: %w", err)
+	}
+	log.Printf("streaming slot=%s publication=%s from %s", slot, publication, startLSN)
+
+	for {
+		msg, err := conn.ReceiveMessage(ctx)
+		if err != nil {
+			return fmt.Errorf("receive message: %w", err)
+		}
+
+		cd, ok := msg.(*pgproto3.CopyData)
+		if !ok {
+			log.Printf("unexpected message %T", msg)
+			continue
+		}
+
+		switch cd.Data[0] {
+		case pglogrepl.PrimaryKeepaliveMessageByteID:
+			pkm, err := pglogrepl.ParsePrimaryKeepaliveMessage(cd.Data[1:])
+			if err != nil {
+				return fmt.Errorf("parse keepalive: %w", err)
+			}
+			log.Printf("keepalive serverWALEnd=%s replyRequested=%t", pkm.ServerWALEnd, pkm.ReplyRequested)
+
+		case pglogrepl.XLogDataByteID:
+			xld, err := pglogrepl.ParseXLogData(cd.Data[1:])
+			if err != nil {
+				return fmt.Errorf("parse XLogData: %w", err)
+			}
+			log.Printf("XLogData walStart=%s %d bytes", xld.WALStart, len(xld.WALData))
+
+		default:
+			log.Printf("unknown CopyData kind %q", cd.Data[0])
+		}
+	}
 }

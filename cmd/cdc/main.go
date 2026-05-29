@@ -51,5 +51,7 @@ func run(cfg config.Config) error {
 	} else {
 		fmt.Printf("slot %q already exists, reusing\n", cfg.SlotName)
 	}
-	return nil
+
+	// 0 = resume from the slot's confirmed position.
+	return replication.Stream(ctx, conn, cfg.SlotName, cfg.Publication, 0)
 }
