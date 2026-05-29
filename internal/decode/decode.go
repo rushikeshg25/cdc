@@ -11,10 +11,13 @@
 package decode
 
 import (
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pglogrepl"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/rushikeshg25/cdc/internal/event"
 )
 
@@ -128,8 +131,30 @@ func tupleToMap(rel *pglogrepl.RelationMessage, tup *pglogrepl.TupleData) map[st
 			// Value unchanged and not transmitted; leave it out.
 			continue
 		default: // text (and binary, if ever)
-			out[name] = string(col.Data)
+			out[name] = convert(rel.Columns[i].DataType, col.Data)
 		}
 	}
 	return out
+}
+
+// convert turns a column's text-format bytes into a typed Go value based on its type OID,
+// so the JSON output has real numbers/booleans/objects instead of strings everywhere.
+// Unknown or unparseable types fall back to the raw string.
+func convert(oid uint32, data []byte) any {
+	s := string(data)
+	switch oid {
+	case pgtype.BoolOID:
+		return s == "t"
+	case pgtype.Int2OID, pgtype.Int4OID, pgtype.Int8OID:
+		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return n
+		}
+	case pgtype.Float4OID, pgtype.Float8OID:
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			return f
+		}
+	case pgtype.JSONOID, pgtype.JSONBOID:
+		return json.RawMessage(data)
+	}
+	return s
 }
