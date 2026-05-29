@@ -67,6 +67,19 @@ func (d *Decoder) Process(lsn pglogrepl.LSN, walData []byte) (*event.ChangeEvent
 		ev.After = tupleToMap(rel, m.Tuple)
 		return &ev, nil
 
+	case *pglogrepl.UpdateMessage:
+		rel, ok := d.relations[m.RelationID]
+		if !ok {
+			return nil, fmt.Errorf("update references unknown relation %d", m.RelationID)
+		}
+		ev := d.newEvent(event.OpUpdate, rel, lsn)
+		// OldTuple is only present per the table's REPLICA IDENTITY (key, or full row).
+		if m.OldTuple != nil {
+			ev.Before = tupleToMap(rel, m.OldTuple)
+		}
+		ev.After = tupleToMap(rel, m.NewTuple)
+		return &ev, nil
+
 	default:
 		// Update/Delete/Truncate handled in later commits.
 		return nil, nil
