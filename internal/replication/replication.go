@@ -8,11 +8,17 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
 )
+
+// standbyTimeout is how often we proactively report our flushed LSN back to the server.
+// Without this feedback Postgres would retain WAL indefinitely (and eventually drop us
+// after wal_sender_timeout).
+const standbyTimeout = 10 * time.Second
 
 // outputPlugin is the logical decoding plugin we stream through. pgoutput is built in.
 const outputPlugin = "pgoutput"
@@ -87,9 +93,27 @@ func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, 
 	}
 	log.Printf("streaming slot=%s publication=%s from %s", slot, publication, startLSN)
 
+	// clientXLogPos is the furthest WAL position we've processed; it's what we report back.
+	clientXLogPos := startLSN
+	nextStandbyDeadline := time.Now().Add(standbyTimeout)
+
 	for {
-		msg, err := conn.ReceiveMessage(ctx)
+		// Send periodic feedback so the server can free WAL up to clientXLogPos.
+		if time.Now().After(nextStandbyDeadline) {
+			if err := sendStandbyStatus(ctx, conn, clientXLogPos); err != nil {
+				return err
+			}
+			nextStandbyDeadline = time.Now().Add(standbyTimeout)
+		}
+
+		// Receive with a deadline so an idle stream still wakes us to send feedback.
+		recvCtx, cancel := context.WithDeadline(ctx, nextStandbyDeadline)
+		msg, err := conn.ReceiveMessage(recvCtx)
+		cancel()
 		if err != nil {
+			if pgconn.Timeout(err) {
+				continue // deadline hit: loop around and send feedback
+			}
 			return fmt.Errorf("receive message: %w", err)
 		}
 
@@ -105,7 +129,10 @@ func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, 
 			if err != nil {
 				return fmt.Errorf("parse keepalive: %w", err)
 			}
-			log.Printf("keepalive serverWALEnd=%s replyRequested=%t", pkm.ServerWALEnd, pkm.ReplyRequested)
+			// ReplyRequested means the server wants our position now, not on the timer.
+			if pkm.ReplyRequested {
+				nextStandbyDeadline = time.Time{}
+			}
 
 		case pglogrepl.XLogDataByteID:
 			xld, err := pglogrepl.ParseXLogData(cd.Data[1:])
@@ -113,9 +140,22 @@ func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, 
 				return fmt.Errorf("parse XLogData: %w", err)
 			}
 			log.Printf("XLogData walStart=%s %d bytes", xld.WALStart, len(xld.WALData))
+			// Advance past the bytes we just consumed.
+			clientXLogPos = xld.WALStart + pglogrepl.LSN(len(xld.WALData))
 
 		default:
 			log.Printf("unknown CopyData kind %q", cd.Data[0])
 		}
 	}
+}
+
+// sendStandbyStatus reports the given WAL position back to the server as write/flush/apply.
+func sendStandbyStatus(ctx context.Context, conn *pgconn.PgConn, pos pglogrepl.LSN) error {
+	err := pglogrepl.SendStandbyStatusUpdate(ctx, conn,
+		pglogrepl.StandbyStatusUpdate{WALWritePosition: pos})
+	if err != nil {
+		return fmt.Errorf("send standby status update: %w", err)
+	}
+	log.Printf("sent standby status: flushed=%s", pos)
+	return nil
 }
