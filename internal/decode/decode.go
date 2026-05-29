@@ -44,7 +44,12 @@ func (d *Decoder) Process(lsn pglogrepl.LSN, walData []byte) (*event.ChangeEvent
 	if err != nil {
 		return nil, fmt.Errorf("parse logical message: %w", err)
 	}
+	return d.handle(lsn, msg)
+}
 
+// handle dispatches on an already-parsed pgoutput message. Split from Process so the
+// decoding logic can be tested with constructed messages, no live server needed.
+func (d *Decoder) handle(lsn pglogrepl.LSN, msg pglogrepl.Message) (*event.ChangeEvent, error) {
 	switch m := msg.(type) {
 	case *pglogrepl.BeginMessage:
 		// Begin carries the transaction id and its commit timestamp up front.
