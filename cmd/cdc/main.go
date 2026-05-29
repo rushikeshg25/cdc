@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/rushikeshg25/cdc/internal/config"
 	"github.com/rushikeshg25/cdc/internal/replication"
@@ -25,13 +27,16 @@ func main() {
 }
 
 func run(cfg config.Config) error {
-	ctx := context.Background()
+	// Cancel the context on Ctrl-C / SIGTERM so the stream can shut down cleanly.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	conn, err := replication.Connect(ctx, cfg.DSN)
 	if err != nil {
 		return err
 	}
-	defer conn.Close(ctx)
+	// Use a fresh context for close: ctx may already be canceled by a signal.
+	defer conn.Close(context.Background())
 
 	fmt.Printf("connected in replication mode (server pid %d)\n", conn.PID())
 

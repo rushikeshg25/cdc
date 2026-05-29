@@ -114,6 +114,14 @@ func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, 
 			if pgconn.Timeout(err) {
 				continue // deadline hit: loop around and send feedback
 			}
+			if ctx.Err() != nil {
+				// Signal-driven shutdown: best-effort flush of our final position.
+				log.Printf("shutting down, flushing final position %s", clientXLogPos)
+				if ferr := sendStandbyStatus(context.Background(), conn, clientXLogPos); ferr != nil {
+					log.Printf("final feedback failed: %v", ferr)
+				}
+				return nil
+			}
 			return fmt.Errorf("receive message: %w", err)
 		}
 
