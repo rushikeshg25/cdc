@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: cdc_postgres
+    # wal_level=logical (and the sender/slot limits) are passed as server flags so the
+    # container comes up ready for logical replication with no ALTER SYSTEM + restart.
+    command:
+      - "postgres"
+      - "-c"
+      - "wal_level=logical"
+      - "-c"
+      - "max_wal_senders=10"
+      - "-c"
+      - "max_replication_slots=10"
+    environment:
+      POSTGRES_USER: cdc
+      POSTGRES_PASSWORD: cdc
+      POSTGRES_DB: cdc_demo
+    ports:
+      - "5432:5432"
+    volumes:
+      # Runs once on first init (empty data dir): creates the publication.
+      - ./scripts/init_pg.sql:/docker-entrypoint-initdb.d/init_pg.sql:ro
+      - cdc_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cdc -d cdc_demo"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  cdc_pgdata:
