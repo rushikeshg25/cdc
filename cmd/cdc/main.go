@@ -73,21 +73,31 @@ func run(cfg config.Config) error {
 	fmt.Printf("writing events to %s\n", cfg.OutputPath)
 
 	cp := checkpoint.New(cfg.OutputPath + ".offset")
+	cpLSN, hasCP, err := cp.Load()
+	if err != nil {
+		return err
+	}
 
-	// On a freshly created slot, snapshot existing rows (consistently, via the exported
-	// snapshot) before streaming. Then stream from the slot's consistent point so live
-	// changes pick up exactly where the snapshot ended. Snapshot must run before Stream:
-	// START_REPLICATION invalidates the exported snapshot.
-	if slotInfo.Created {
+	// Decide where to start, and whether to snapshot:
+	//   - checkpoint present  -> resume exactly from it; skip snapshot (already done).
+	//   - fresh slot, no ckpt -> snapshot existing rows, then stream from consistent point.
+	//   - existing slot, no ckpt -> resume from the slot's confirmed position (LSN 0).
+	// Snapshot must run before Stream: START_REPLICATION invalidates the exported snapshot.
+	startLSN := slotInfo.ConsistentPoint
+	switch {
+	case hasCP:
+		startLSN = cpLSN
+		fmt.Printf("resuming from checkpoint %s (skipping snapshot)\n", cpLSN)
+	case slotInfo.Created:
 		n, err := snapshot.Run(ctx, cfg.DSN, slotInfo.SnapshotName, cfg.Publication,
 			slotInfo.ConsistentPoint.String(), snk)
 		if err != nil {
 			return err
 		}
 		fmt.Printf("snapshot complete: %d rows\n", n)
+	default:
+		fmt.Println("no checkpoint; resuming from slot's confirmed position")
 	}
 
-	// ConsistentPoint is the snapshot boundary when created, or zero (resume from the
-	// slot's confirmed position) when reusing an existing slot.
-	return replication.Stream(ctx, conn, cfg.SlotName, cfg.Publication, slotInfo.ConsistentPoint, snk, cp.Save)
+	return replication.Stream(ctx, conn, cfg.SlotName, cfg.Publication, startLSN, snk, cp.Save)
 }
