@@ -62,6 +62,11 @@ func run(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if cerr := snk.Close(); cerr != nil {
+			fmt.Fprintln(os.Stderr, "cdc: sink close:", cerr)
+		}
+	}()
 	fmt.Printf("writing events to %s\n", cfg.OutputPath)
 
 	// 0 = resume from the slot's confirmed position.
