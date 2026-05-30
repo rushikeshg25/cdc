@@ -70,6 +70,21 @@ go run ./cmd/cdc --output events.jsonl
 
 Then, in another terminal, run some changes against the database and watch `events.jsonl`.
 
+On a fresh slot the engine first **snapshots** existing rows (as `read` events) consistently,
+then streams live changes from the exact point the snapshot ended. Progress is checkpointed
+to `<output>.offset`, so a restart **resumes** from there and skips the snapshot.
+
+### Capture only some tables
+
+Scope capture to a subset of tables with `--tables` (a publication `FOR TABLE` is managed
+for you). Use a dedicated publication/slot name, since the default `cdc_pub` is `FOR ALL
+TABLES` and can't be narrowed:
+
+```sh
+go run ./cmd/cdc --publication cdc_scoped --slot cdc_scoped_slot \
+  --tables public.users,public.orders --output events.jsonl
+```
+
 ## Layout
 
 ```
