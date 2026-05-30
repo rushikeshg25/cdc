@@ -21,6 +21,15 @@ type Config struct {
 	// Tables, when non-empty, scopes capture to these schema.table names (via a publication
 	// FOR TABLE …). Empty means use the existing publication as-is.
 	Tables []string
+
+	// Sink selects the output: file (default), stdout, http, or kafka.
+	Sink string
+	// HTTPURL is the endpoint for the http sink.
+	HTTPURL string
+	// KafkaBrokers / KafkaTopic configure the kafka sink.
+	KafkaBrokers []string
+	KafkaTopic   string
+
 	// Verbose enables debug-level logging.
 	Verbose bool
 }
@@ -36,17 +45,23 @@ func Parse(args []string) (Config, error) {
 	fs.StringVar(&c.OutputPath, "output", "events.jsonl", "JSONL output file for change events")
 	var tables string
 	fs.StringVar(&tables, "tables", "", "comma-separated schema.table list to capture (default: whole publication)")
+	fs.StringVar(&c.Sink, "sink", "file", "output sink: file, stdout, http, kafka")
+	fs.StringVar(&c.HTTPURL, "http-url", "", "endpoint for the http sink")
+	var brokers string
+	fs.StringVar(&brokers, "kafka-brokers", "localhost:9092", "comma-separated kafka brokers")
+	fs.StringVar(&c.KafkaTopic, "kafka-topic", "", "kafka topic (default: cdc.<schema>.<table>)")
 	fs.BoolVar(&c.Verbose, "verbose", false, "enable debug logging")
 
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
-	c.Tables = splitTables(tables)
+	c.Tables = splitCSV(tables)
+	c.KafkaBrokers = splitCSV(brokers)
 	return c, nil
 }
 
-// splitTables parses a comma-separated table list, trimming whitespace and dropping empties.
-func splitTables(s string) []string {
+// splitCSV parses a comma-separated list, trimming whitespace and dropping empties.
+func splitCSV(s string) []string {
 	var out []string
 	for part := range strings.SplitSeq(s, ",") {
 		if t := strings.TrimSpace(part); t != "" {

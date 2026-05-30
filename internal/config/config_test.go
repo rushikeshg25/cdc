@@ -11,11 +11,13 @@ func TestParseDefaults(t *testing.T) {
 		t.Fatalf("Parse(nil) error: %v", err)
 	}
 	want := Config{
-		DSN:         "postgres://cdc:cdc@localhost:5433/cdc_demo?sslmode=disable",
-		SlotName:    "cdc_slot",
-		Publication: "cdc_pub",
-		OutputPath:  "events.jsonl",
-		Verbose:     false,
+		DSN:          "postgres://cdc:cdc@localhost:5433/cdc_demo?sslmode=disable",
+		SlotName:     "cdc_slot",
+		Publication:  "cdc_pub",
+		OutputPath:   "events.jsonl",
+		Sink:         "file",
+		KafkaBrokers: []string{"localhost:9092"},
+		Verbose:      false,
 	}
 	if !reflect.DeepEqual(c, want) {
 		t.Errorf("defaults =\n  %+v\nwant\n  %+v", c, want)
@@ -35,11 +37,13 @@ func TestParseOverrides(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 	want := Config{
-		DSN:         "postgres://x/y",
-		SlotName:    "s1",
-		Publication: "p1",
-		OutputPath:  "out.jsonl",
-		Verbose:     true,
+		DSN:          "postgres://x/y",
+		SlotName:     "s1",
+		Publication:  "p1",
+		OutputPath:   "out.jsonl",
+		Sink:         "file",
+		KafkaBrokers: []string{"localhost:9092"},
+		Verbose:      true,
 	}
 	if !reflect.DeepEqual(c, want) {
 		t.Errorf("overrides =\n  %+v\nwant\n  %+v", c, want)

@@ -70,7 +70,13 @@ func run(cfg config.Config) error {
 		fmt.Printf("slot %q already exists, reusing\n", cfg.SlotName)
 	}
 
-	snk, err := sink.NewFile(cfg.OutputPath)
+	snk, err := sink.New(sink.Options{
+		Kind:         cfg.Sink,
+		FilePath:     cfg.OutputPath,
+		HTTPURL:      cfg.HTTPURL,
+		KafkaBrokers: cfg.KafkaBrokers,
+		KafkaTopic:   cfg.KafkaTopic,
+	})
 	if err != nil {
 		return err
 	}
@@ -79,7 +85,7 @@ func run(cfg config.Config) error {
 			fmt.Fprintln(os.Stderr, "cdc: sink close:", cerr)
 		}
 	}()
-	fmt.Printf("writing events to %s\n", cfg.OutputPath)
+	fmt.Printf("sink=%s\n", cfg.Sink)
 
 	cp := checkpoint.New(cfg.OutputPath + ".offset")
 	cpLSN, hasCP, err := cp.Load()
