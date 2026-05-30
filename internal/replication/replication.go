@@ -7,7 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pglogrepl"
@@ -118,7 +118,7 @@ func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, 
 	if err != nil {
 		return fmt.Errorf("START_REPLICATION: %w", err)
 	}
-	log.Printf("streaming slot=%s publication=%s from %s", slot, publication, startLSN)
+	slog.Info("streaming", "slot", slot, "publication", publication, "from", startLSN)
 
 	dec := decode.New()
 	// clientXLogPos is the furthest WAL position we've processed; it's what we report back.
@@ -145,9 +145,9 @@ func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, 
 			}
 			if ctx.Err() != nil {
 				// Signal-driven shutdown: flush the sink and report our final position.
-				log.Printf("shutting down, flushing final position %s", clientXLogPos)
+				slog.Info("shutting down, flushing final position", "lsn", clientXLogPos)
 				if ferr := flushAndReport(context.Background(), conn, snk, save, clientXLogPos); ferr != nil {
-					log.Printf("final flush/feedback failed: %v", ferr)
+					slog.Error("final flush/feedback failed", "err", ferr)
 				}
 				return nil
 			}
@@ -156,7 +156,7 @@ func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, 
 
 		cd, ok := msg.(*pgproto3.CopyData)
 		if !ok {
-			log.Printf("unexpected message %T", msg)
+			slog.Warn("unexpected message", "type", fmt.Sprintf("%T", msg))
 			continue
 		}
 
@@ -189,7 +189,7 @@ func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, 
 			clientXLogPos = xld.WALStart + pglogrepl.LSN(len(xld.WALData))
 
 		default:
-			log.Printf("unknown CopyData kind %q", cd.Data[0])
+			slog.Warn("unknown CopyData kind", "kind", string(cd.Data[0]))
 		}
 	}
 }
@@ -213,6 +213,6 @@ func flushAndReport(ctx context.Context, conn *pgconn.PgConn, snk sink.Sink, sav
 	if err != nil {
 		return fmt.Errorf("send standby status update: %w", err)
 	}
-	log.Printf("flushed sink + checkpoint + reported LSN %s", pos)
+	slog.Debug("flushed sink + checkpoint + reported lsn", "lsn", pos)
 	return nil
 }

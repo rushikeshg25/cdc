@@ -4,7 +4,7 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -24,8 +24,14 @@ func main() {
 		os.Exit(2)
 	}
 
+	level := slog.LevelInfo
+	if cfg.Verbose {
+		level = slog.LevelDebug
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+
 	if err := run(cfg); err != nil {
-		fmt.Fprintln(os.Stderr, "cdc:", err)
+		slog.Error("cdc exited", "err", err)
 		os.Exit(1)
 	}
 }
@@ -42,21 +48,21 @@ func run(cfg config.Config) error {
 	// Use a fresh context for close: ctx may already be canceled by a signal.
 	defer conn.Close(context.Background())
 
-	fmt.Printf("connected in replication mode (server pid %d)\n", conn.PID())
+	slog.Info("connected in replication mode", "server_pid", conn.PID())
 
 	sys, err := replication.IdentifySystem(ctx, conn)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("system: id=%s timeline=%d db=%s currentWAL=%s\n",
-		sys.SystemID, sys.Timeline, sys.DBName, sys.XLogPos)
+	slog.Info("system identified",
+		"system_id", sys.SystemID, "timeline", sys.Timeline, "db", sys.DBName, "current_wal", sys.XLogPos)
 
 	// Scope the publication to --tables (if given) before creating the slot/streaming.
 	if err := publication.Ensure(ctx, cfg.DSN, cfg.Publication, cfg.Tables); err != nil {
 		return err
 	}
 	if len(cfg.Tables) > 0 {
-		fmt.Printf("publication %q scoped to %v\n", cfg.Publication, cfg.Tables)
+		slog.Info("publication scoped", "publication", cfg.Publication, "tables", cfg.Tables)
 	}
 
 	slotInfo, err := replication.EnsureSlot(ctx, conn, cfg.SlotName)
@@ -64,10 +70,10 @@ func run(cfg config.Config) error {
 		return err
 	}
 	if slotInfo.Created {
-		fmt.Printf("slot %q created (consistentPoint=%s snapshot=%s)\n",
-			cfg.SlotName, slotInfo.ConsistentPoint, slotInfo.SnapshotName)
+		slog.Info("slot created", "slot", cfg.SlotName,
+			"consistent_point", slotInfo.ConsistentPoint, "snapshot", slotInfo.SnapshotName)
 	} else {
-		fmt.Printf("slot %q already exists, reusing\n", cfg.SlotName)
+		slog.Info("slot reused", "slot", cfg.SlotName)
 	}
 
 	snk, err := sink.New(sink.Options{
@@ -82,10 +88,10 @@ func run(cfg config.Config) error {
 	}
 	defer func() {
 		if cerr := snk.Close(); cerr != nil {
-			fmt.Fprintln(os.Stderr, "cdc: sink close:", cerr)
+			slog.Error("sink close", "err", cerr)
 		}
 	}()
-	fmt.Printf("sink=%s\n", cfg.Sink)
+	slog.Info("sink ready", "sink", cfg.Sink)
 
 	cp := checkpoint.New(cfg.OutputPath + ".offset")
 	cpLSN, hasCP, err := cp.Load()
@@ -102,16 +108,16 @@ func run(cfg config.Config) error {
 	switch {
 	case hasCP:
 		startLSN = cpLSN
-		fmt.Printf("resuming from checkpoint %s (skipping snapshot)\n", cpLSN)
+		slog.Info("resuming from checkpoint", "lsn", cpLSN, "snapshot", "skipped")
 	case slotInfo.Created:
 		n, err := snapshot.Run(ctx, cfg.DSN, slotInfo.SnapshotName, cfg.Publication,
 			slotInfo.ConsistentPoint.String(), snk)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("snapshot complete: %d rows\n", n)
+		slog.Info("snapshot complete", "rows", n)
 	default:
-		fmt.Println("no checkpoint; resuming from slot's confirmed position")
+		slog.Info("no checkpoint; resuming from slot's confirmed position")
 	}
 
 	return replication.Stream(ctx, conn, cfg.SlotName, cfg.Publication, startLSN, snk, cp.Save)
