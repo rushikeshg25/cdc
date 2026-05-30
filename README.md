@@ -85,6 +85,35 @@ go run ./cmd/cdc --publication cdc_scoped --slot cdc_scoped_slot \
   --tables public.users,public.orders --output events.jsonl
 ```
 
+## Sinks
+
+Select the output with `--sink` (default `file`):
+
+| `--sink`  | Flags | Behavior |
+|-----------|-------|----------|
+| `file`    | `--output events.jsonl` | Append JSONL, fsync on flush |
+| `stdout`  | — | JSONL to stdout |
+| `http`    | `--http-url URL` | POST a JSON array batch per flush |
+| `kafka`   | `--kafka-brokers`, `--kafka-topic` | Publish per event |
+
+All sinks honor the **at-least-once** invariant: the engine only advances the replication
+LSN (and checkpoint) after the sink's `Flush()` durably persists the batch. A failing sink
+keeps its buffer and stalls progress rather than dropping events (duplicates are possible
+after a crash).
+
+**Kafka routing:** messages are keyed by `schema.table` (hash-partitioned, so per-table
+order is preserved). With no `--kafka-topic`, events route to `cdc.<schema>.<table>`; set
+`--kafka-topic` to send everything to one topic.
+
+```sh
+# Kafka (start the broker first: make kafka-up)
+go run ./cmd/cdc --sink kafka --kafka-brokers localhost:9092
+make kafka-consume TOPIC=cdc.public.users
+
+# HTTP
+go run ./cmd/cdc --sink http --http-url http://localhost:8080/events
+```
+
 ## Layout
 
 ```
