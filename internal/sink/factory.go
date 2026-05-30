@@ -22,6 +22,8 @@ func New(o Options) (Sink, error) {
 		return NewStdout(), nil
 	case "http":
 		return NewHTTP(o.HTTPURL)
+	case "kafka":
+		return NewKafka(o.KafkaBrokers, o.KafkaTopic)
 	default:
 		return nil, fmt.Errorf("unknown sink %q", o.Kind)
 	}
