@@ -12,6 +12,7 @@ import (
 	"github.com/rushikeshg25/cdc/internal/config"
 	"github.com/rushikeshg25/cdc/internal/replication"
 	"github.com/rushikeshg25/cdc/internal/sink"
+	"github.com/rushikeshg25/cdc/internal/snapshot"
 )
 
 func main() {
@@ -70,6 +71,20 @@ func run(cfg config.Config) error {
 	}()
 	fmt.Printf("writing events to %s\n", cfg.OutputPath)
 
-	// 0 = resume from the slot's confirmed position.
-	return replication.Stream(ctx, conn, cfg.SlotName, cfg.Publication, 0, snk)
+	// On a freshly created slot, snapshot existing rows (consistently, via the exported
+	// snapshot) before streaming. Then stream from the slot's consistent point so live
+	// changes pick up exactly where the snapshot ended. Snapshot must run before Stream:
+	// START_REPLICATION invalidates the exported snapshot.
+	if slotInfo.Created {
+		n, err := snapshot.Run(ctx, cfg.DSN, slotInfo.SnapshotName, cfg.Publication,
+			slotInfo.ConsistentPoint.String(), snk)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("snapshot complete: %d rows\n", n)
+	}
+
+	// ConsistentPoint is the snapshot boundary when created, or zero (resume from the
+	// slot's confirmed position) when reusing an existing slot.
+	return replication.Stream(ctx, conn, cfg.SlotName, cfg.Publication, slotInfo.ConsistentPoint, snk)
 }

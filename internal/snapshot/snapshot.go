@@ -68,7 +68,11 @@ func Run(ctx context.Context, dsn, snapshotName, publication, lsn string, snk si
 		return 0, err
 	}
 
-	tx, err := conn.Begin(ctx)
+	// A snapshot-importing transaction must be REPEATABLE READ (or SERIALIZABLE).
+	tx, err := conn.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
 	if err != nil {
 		return 0, fmt.Errorf("snapshot begin: %w", err)
 	}
