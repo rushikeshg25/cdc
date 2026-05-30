@@ -11,6 +11,8 @@ const (
 	OpUpdate   Op = "update"
 	OpDelete   Op = "delete"
 	OpTruncate Op = "truncate"
+	// OpRead is a row observed during the initial snapshot (not a live change).
+	OpRead Op = "read"
 )
 
 // ChangeEvent is one decoded row-level change.
