@@ -11,6 +11,7 @@ import (
 
 	"github.com/rushikeshg25/cdc/internal/checkpoint"
 	"github.com/rushikeshg25/cdc/internal/config"
+	"github.com/rushikeshg25/cdc/internal/metrics"
 	"github.com/rushikeshg25/cdc/internal/publication"
 	"github.com/rushikeshg25/cdc/internal/replication"
 	"github.com/rushikeshg25/cdc/internal/sink"
@@ -40,6 +41,8 @@ func run(cfg config.Config) error {
 	// Cancel the context on Ctrl-C / SIGTERM so the stream can shut down cleanly.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	metrics.Serve(cfg.MetricsAddr)
 
 	conn, err := replication.Connect(ctx, cfg.DSN)
 	if err != nil {

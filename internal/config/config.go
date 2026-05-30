@@ -30,6 +30,9 @@ type Config struct {
 	KafkaBrokers []string
 	KafkaTopic   string
 
+	// MetricsAddr, when non-empty, serves Prometheus metrics at /metrics on that address.
+	MetricsAddr string
+
 	// Verbose enables debug-level logging.
 	Verbose bool
 }
@@ -50,6 +53,7 @@ func Parse(args []string) (Config, error) {
 	var brokers string
 	fs.StringVar(&brokers, "kafka-brokers", "localhost:9092", "comma-separated kafka brokers")
 	fs.StringVar(&c.KafkaTopic, "kafka-topic", "", "kafka topic (default: cdc.<schema>.<table>)")
+	fs.StringVar(&c.MetricsAddr, "metrics-addr", "", "serve Prometheus /metrics on this address (e.g. :9100)")
 	fs.BoolVar(&c.Verbose, "verbose", false, "enable debug logging")
 
 	if err := fs.Parse(args); err != nil {
