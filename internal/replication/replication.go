@@ -14,11 +14,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/rushikeshg25/cdc/internal/decode"
-	"github.com/rushikeshg25/cdc/internal/event"
+	"github.com/rushikeshg25/cdc/internal/sink"
 )
-
-// Handler consumes one decoded change event. Returning an error stops the stream.
-type Handler func(event.ChangeEvent) error
 
 // standbyTimeout is how often we proactively report our flushed LSN back to the server.
 // Without this feedback Postgres would retain WAL indefinitely (and eventually drop us
@@ -85,7 +82,7 @@ func EnsureSlot(ctx context.Context, conn *pgconn.PgConn, slotName string) (crea
 // sending LSN feedback come in later commits.
 //
 // startLSN of 0 tells Postgres to resume from the slot's confirmed position.
-func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, startLSN pglogrepl.LSN, handle Handler) error {
+func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, startLSN pglogrepl.LSN, snk sink.Sink) error {
 	// pgoutput needs the protocol version and which publication's tables to stream.
 	pluginArgs := []string{
 		"proto_version '1'",
@@ -105,8 +102,9 @@ func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, 
 
 	for {
 		// Send periodic feedback so the server can free WAL up to clientXLogPos.
+		// Flush the sink first so we only confirm an LSN whose events are durable.
 		if time.Now().After(nextStandbyDeadline) {
-			if err := sendStandbyStatus(ctx, conn, clientXLogPos); err != nil {
+			if err := flushAndReport(ctx, conn, snk, clientXLogPos); err != nil {
 				return err
 			}
 			nextStandbyDeadline = time.Now().Add(standbyTimeout)
@@ -121,10 +119,10 @@ func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, 
 				continue // deadline hit: loop around and send feedback
 			}
 			if ctx.Err() != nil {
-				// Signal-driven shutdown: best-effort flush of our final position.
+				// Signal-driven shutdown: flush the sink and report our final position.
 				log.Printf("shutting down, flushing final position %s", clientXLogPos)
-				if ferr := sendStandbyStatus(context.Background(), conn, clientXLogPos); ferr != nil {
-					log.Printf("final feedback failed: %v", ferr)
+				if ferr := flushAndReport(context.Background(), conn, snk, clientXLogPos); ferr != nil {
+					log.Printf("final flush/feedback failed: %v", ferr)
 				}
 				return nil
 			}
@@ -158,8 +156,8 @@ func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, 
 				return err
 			}
 			for _, ev := range events {
-				if err := handle(ev); err != nil {
-					return fmt.Errorf("handle event: %w", err)
+				if err := snk.Write(ev); err != nil {
+					return fmt.Errorf("sink write: %w", err)
 				}
 			}
 			// Advance past the bytes we just consumed.
@@ -171,13 +169,18 @@ func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, 
 	}
 }
 
-// sendStandbyStatus reports the given WAL position back to the server as write/flush/apply.
-func sendStandbyStatus(ctx context.Context, conn *pgconn.PgConn, pos pglogrepl.LSN) error {
+// flushAndReport makes the sink durable up to pos, then reports pos to the server as
+// write/flush/apply. Flushing before reporting is the at-least-once guarantee: we never
+// tell Postgres it can recycle WAL for events we haven't persisted.
+func flushAndReport(ctx context.Context, conn *pgconn.PgConn, snk sink.Sink, pos pglogrepl.LSN) error {
+	if err := snk.Flush(); err != nil {
+		return fmt.Errorf("sink flush: %w", err)
+	}
 	err := pglogrepl.SendStandbyStatusUpdate(ctx, conn,
 		pglogrepl.StandbyStatusUpdate{WALWritePosition: pos})
 	if err != nil {
 		return fmt.Errorf("send standby status update: %w", err)
 	}
-	log.Printf("sent standby status: flushed=%s", pos)
+	log.Printf("flushed sink + reported LSN %s", pos)
 	return nil
 }
