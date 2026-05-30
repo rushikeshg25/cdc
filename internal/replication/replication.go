@@ -104,7 +104,10 @@ func EnsureSlot(ctx context.Context, conn *pgconn.PgConn, slotName string) (Slot
 // sending LSN feedback come in later commits.
 //
 // startLSN of 0 tells Postgres to resume from the slot's confirmed position.
-func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, startLSN pglogrepl.LSN, snk sink.Sink) error {
+// saveCheckpoint persists a durably-flushed LSN. It may be nil to disable checkpointing.
+type saveCheckpoint func(pglogrepl.LSN) error
+
+func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, startLSN pglogrepl.LSN, snk sink.Sink, save saveCheckpoint) error {
 	// pgoutput needs the protocol version and which publication's tables to stream.
 	pluginArgs := []string{
 		"proto_version '1'",
@@ -126,7 +129,7 @@ func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, 
 		// Send periodic feedback so the server can free WAL up to clientXLogPos.
 		// Flush the sink first so we only confirm an LSN whose events are durable.
 		if time.Now().After(nextStandbyDeadline) {
-			if err := flushAndReport(ctx, conn, snk, clientXLogPos); err != nil {
+			if err := flushAndReport(ctx, conn, snk, save, clientXLogPos); err != nil {
 				return err
 			}
 			nextStandbyDeadline = time.Now().Add(standbyTimeout)
@@ -143,7 +146,7 @@ func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, 
 			if ctx.Err() != nil {
 				// Signal-driven shutdown: flush the sink and report our final position.
 				log.Printf("shutting down, flushing final position %s", clientXLogPos)
-				if ferr := flushAndReport(context.Background(), conn, snk, clientXLogPos); ferr != nil {
+				if ferr := flushAndReport(context.Background(), conn, snk, save, clientXLogPos); ferr != nil {
 					log.Printf("final flush/feedback failed: %v", ferr)
 				}
 				return nil
@@ -194,15 +197,22 @@ func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, 
 // flushAndReport makes the sink durable up to pos, then reports pos to the server as
 // write/flush/apply. Flushing before reporting is the at-least-once guarantee: we never
 // tell Postgres it can recycle WAL for events we haven't persisted.
-func flushAndReport(ctx context.Context, conn *pgconn.PgConn, snk sink.Sink, pos pglogrepl.LSN) error {
+func flushAndReport(ctx context.Context, conn *pgconn.PgConn, snk sink.Sink, save saveCheckpoint, pos pglogrepl.LSN) error {
 	if err := snk.Flush(); err != nil {
 		return fmt.Errorf("sink flush: %w", err)
+	}
+	// Persist our own checkpoint before acking the server, so a crash never leaves us
+	// resuming earlier than what's already durable in the sink.
+	if save != nil {
+		if err := save(pos); err != nil {
+			return fmt.Errorf("save checkpoint: %w", err)
+		}
 	}
 	err := pglogrepl.SendStandbyStatusUpdate(ctx, conn,
 		pglogrepl.StandbyStatusUpdate{WALWritePosition: pos})
 	if err != nil {
 		return fmt.Errorf("send standby status update: %w", err)
 	}
-	log.Printf("flushed sink + reported LSN %s", pos)
+	log.Printf("flushed sink + checkpoint + reported LSN %s", pos)
 	return nil
 }

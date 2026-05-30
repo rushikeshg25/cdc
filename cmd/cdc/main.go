@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/rushikeshg25/cdc/internal/checkpoint"
 	"github.com/rushikeshg25/cdc/internal/config"
 	"github.com/rushikeshg25/cdc/internal/replication"
 	"github.com/rushikeshg25/cdc/internal/sink"
@@ -71,6 +72,8 @@ func run(cfg config.Config) error {
 	}()
 	fmt.Printf("writing events to %s\n", cfg.OutputPath)
 
+	cp := checkpoint.New(cfg.OutputPath + ".offset")
+
 	// On a freshly created slot, snapshot existing rows (consistently, via the exported
 	// snapshot) before streaming. Then stream from the slot's consistent point so live
 	// changes pick up exactly where the snapshot ended. Snapshot must run before Stream:
@@ -86,5 +89,5 @@ func run(cfg config.Config) error {
 
 	// ConsistentPoint is the snapshot boundary when created, or zero (resume from the
 	// slot's confirmed position) when reusing an existing slot.
-	return replication.Stream(ctx, conn, cfg.SlotName, cfg.Publication, slotInfo.ConsistentPoint, snk)
+	return replication.Stream(ctx, conn, cfg.SlotName, cfg.Publication, slotInfo.ConsistentPoint, snk, cp.Save)
 }
