@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/rushikeshg25/cdc/internal/decode"
+	"github.com/rushikeshg25/cdc/internal/metrics"
 	"github.com/rushikeshg25/cdc/internal/sink"
 )
 
@@ -166,6 +167,7 @@ func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, 
 			if err != nil {
 				return fmt.Errorf("parse keepalive: %w", err)
 			}
+			metrics.ReplicationLagBytes.Set(float64(pkm.ServerWALEnd - clientXLogPos))
 			// ReplyRequested means the server wants our position now, not on the timer.
 			if pkm.ReplyRequested {
 				nextStandbyDeadline = time.Time{}
@@ -182,11 +184,14 @@ func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, 
 			}
 			for _, ev := range events {
 				if err := snk.Write(ev); err != nil {
+					metrics.SinkErrorsTotal.Inc()
 					return fmt.Errorf("sink write: %w", err)
 				}
+				metrics.EventsTotal.WithLabelValues(string(ev.Op)).Inc()
 			}
 			// Advance past the bytes we just consumed.
 			clientXLogPos = xld.WALStart + pglogrepl.LSN(len(xld.WALData))
+			metrics.ReplicationLagBytes.Set(float64(xld.ServerWALEnd - clientXLogPos))
 
 		default:
 			slog.Warn("unknown CopyData kind", "kind", string(cd.Data[0]))
@@ -199,6 +204,7 @@ func Stream(ctx context.Context, conn *pgconn.PgConn, slot, publication string, 
 // tell Postgres it can recycle WAL for events we haven't persisted.
 func flushAndReport(ctx context.Context, conn *pgconn.PgConn, snk sink.Sink, save saveCheckpoint, pos pglogrepl.LSN) error {
 	if err := snk.Flush(); err != nil {
+		metrics.SinkErrorsTotal.Inc()
 		return fmt.Errorf("sink flush: %w", err)
 	}
 	// Persist our own checkpoint before acking the server, so a crash never leaves us

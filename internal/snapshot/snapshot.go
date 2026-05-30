@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/rushikeshg25/cdc/internal/event"
+	"github.com/rushikeshg25/cdc/internal/metrics"
 	"github.com/rushikeshg25/cdc/internal/sink"
 )
 
@@ -119,8 +120,10 @@ func copyTable(ctx context.Context, tx pgx.Tx, t Table, lsn string, snk sink.Sin
 			LSN:    lsn,
 		}
 		if err := snk.Write(ev); err != nil {
+			metrics.SinkErrorsTotal.Inc()
 			return n, fmt.Errorf("sink write (snapshot %s): %w", ident, err)
 		}
+		metrics.EventsTotal.WithLabelValues(string(event.OpRead)).Inc()
 		n++
 	}
 	return n, rows.Err()
