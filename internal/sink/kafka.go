@@ -3,6 +3,7 @@ package sink
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -51,11 +52,21 @@ func (k *Kafka) Flush() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := k.w.WriteMessages(ctx, k.buf...); err != nil {
-		return fmt.Errorf("kafka write: %w", err)
+
+	// With auto-created topics, the first write can race topic-metadata propagation and
+	// fail with UnknownTopicOrPartition; retry a few times before giving up.
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+		if err = k.w.WriteMessages(ctx, k.buf...); err == nil {
+			k.buf = k.buf[:0]
+			return nil
+		}
+		if !errors.Is(err, kafka.UnknownTopicOrPartition) {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
-	k.buf = k.buf[:0]
-	return nil
+	return fmt.Errorf("kafka write: %w", err)
 }
 
 func (k *Kafka) Close() error {

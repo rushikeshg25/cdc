@@ -42,3 +42,10 @@ docker-down: ## Stop and remove the Postgres container
 
 docker-logs: ## Follow Postgres container logs
 	docker compose logs -f postgres
+
+kafka-up: ## Start the Kafka broker
+	docker compose up -d kafka
+
+kafka-consume: ## Consume a topic (TOPIC=cdc.public.users)
+	docker exec -it cdc_kafka /opt/kafka/bin/kafka-console-consumer.sh \
+		--bootstrap-server localhost:9092 --topic $(TOPIC) --from-beginning
