@@ -30,6 +30,7 @@ type ChangeEvent struct {
 	LSN string `json:"lsn"`
 	// Xid is the transaction id this change belongs to.
 	Xid uint32 `json:"xid,omitempty"`
-	// CommitTime is the transaction's commit timestamp.
-	CommitTime time.Time `json:"commit_time"`
+	// CommitTime is the transaction's commit timestamp. Nil for snapshot reads, which have
+	// no commit time.
+	CommitTime *time.Time `json:"commit_time,omitempty"`
 }

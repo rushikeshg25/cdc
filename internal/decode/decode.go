@@ -119,14 +119,18 @@ func (d *Decoder) handle(lsn pglogrepl.LSN, msg pglogrepl.Message) ([]event.Chan
 
 // newEvent builds a ChangeEvent stamped with the current relation and transaction context.
 func (d *Decoder) newEvent(op event.Op, rel *pglogrepl.RelationMessage, lsn pglogrepl.LSN) event.ChangeEvent {
-	return event.ChangeEvent{
-		Op:         op,
-		Schema:     rel.Namespace,
-		Table:      rel.RelationName,
-		LSN:        lsn.String(),
-		Xid:        d.xid,
-		CommitTime: d.commitTime,
+	ev := event.ChangeEvent{
+		Op:     op,
+		Schema: rel.Namespace,
+		Table:  rel.RelationName,
+		LSN:    lsn.String(),
+		Xid:    d.xid,
 	}
+	if !d.commitTime.IsZero() {
+		ct := d.commitTime
+		ev.CommitTime = &ct
+	}
+	return ev
 }
 
 // tupleToMap resolves a tuple's positional column values against the relation's column
