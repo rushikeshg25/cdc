@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestParseDefaults(t *testing.T) {
 	c, err := Parse(nil)
@@ -14,7 +17,7 @@ func TestParseDefaults(t *testing.T) {
 		OutputPath:  "events.jsonl",
 		Verbose:     false,
 	}
-	if c != want {
+	if !reflect.DeepEqual(c, want) {
 		t.Errorf("defaults =\n  %+v\nwant\n  %+v", c, want)
 	}
 }
@@ -38,8 +41,24 @@ func TestParseOverrides(t *testing.T) {
 		OutputPath:  "out.jsonl",
 		Verbose:     true,
 	}
-	if c != want {
+	if !reflect.DeepEqual(c, want) {
 		t.Errorf("overrides =\n  %+v\nwant\n  %+v", c, want)
+	}
+}
+
+func TestParseTables(t *testing.T) {
+	c, err := Parse([]string{"--tables", " public.users, public.items ,, "})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	want := []string{"public.users", "public.items"}
+	if !reflect.DeepEqual(c.Tables, want) {
+		t.Errorf("Tables = %#v, want %#v", c.Tables, want)
+	}
+
+	c, _ = Parse(nil)
+	if c.Tables != nil {
+		t.Errorf("default Tables = %#v, want nil", c.Tables)
 	}
 }
 

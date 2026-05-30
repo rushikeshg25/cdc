@@ -2,7 +2,10 @@
 // from command-line flags.
 package config
 
-import "flag"
+import (
+	"flag"
+	"strings"
+)
 
 // Config is everything the cdc engine needs to run.
 type Config struct {
@@ -15,6 +18,9 @@ type Config struct {
 	Publication string
 	// OutputPath is the JSONL file change events are appended to.
 	OutputPath string
+	// Tables, when non-empty, scopes capture to these schema.table names (via a publication
+	// FOR TABLE …). Empty means use the existing publication as-is.
+	Tables []string
 	// Verbose enables debug-level logging.
 	Verbose bool
 }
@@ -28,10 +34,24 @@ func Parse(args []string) (Config, error) {
 	fs.StringVar(&c.SlotName, "slot", "cdc_slot", "logical replication slot name")
 	fs.StringVar(&c.Publication, "publication", "cdc_pub", "publication to stream")
 	fs.StringVar(&c.OutputPath, "output", "events.jsonl", "JSONL output file for change events")
+	var tables string
+	fs.StringVar(&tables, "tables", "", "comma-separated schema.table list to capture (default: whole publication)")
 	fs.BoolVar(&c.Verbose, "verbose", false, "enable debug logging")
 
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
+	c.Tables = splitTables(tables)
 	return c, nil
+}
+
+// splitTables parses a comma-separated table list, trimming whitespace and dropping empties.
+func splitTables(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if t := strings.TrimSpace(part); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
