@@ -34,6 +34,9 @@ setup-pg: ## Configure local Homebrew Postgres for logical replication
 setup-docker: ## Bring up Dockerized Postgres (preconfigured)
 	./scripts/setup_pg_docker.sh
 
+demo: ## Drive an insert/update/delete/truncate workload (run cdc separately)
+	./scripts/demo.sh
+
 docker-up: ## Start the Postgres container
 	docker compose up -d
 
