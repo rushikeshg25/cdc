@@ -58,22 +58,44 @@ func IdentifySystem(ctx context.Context, conn *pgconn.PgConn) (pglogrepl.Identif
 	return sys, nil
 }
 
+// SlotInfo describes the result of ensuring a replication slot exists.
+type SlotInfo struct {
+	// Created is true when this call created the slot (vs. reusing an existing one).
+	Created bool
+	// ConsistentPoint is the LSN at which the slot was created — the exact point from which
+	// streaming resumes everything that happened after the exported snapshot. Only
+	// meaningful when Created is true.
+	ConsistentPoint pglogrepl.LSN
+	// SnapshotName is the exported snapshot a separate connection can import to read a
+	// consistent view of existing rows. Only set when Created is true.
+	SnapshotName string
+}
+
 // EnsureSlot creates a persistent logical replication slot using the pgoutput plugin, or
 // leaves it in place if it already exists. The slot is the server-side bookmark that keeps
-// WAL around until we confirm we've processed it. It returns true if it created the slot.
-func EnsureSlot(ctx context.Context, conn *pgconn.PgConn, slotName string) (created bool, err error) {
-	_, err = pglogrepl.CreateReplicationSlot(ctx, conn, slotName, outputPlugin,
-		pglogrepl.CreateReplicationSlotOptions{Temporary: false})
+// WAL around until we confirm we've processed it.
+//
+// When it creates the slot it exports a snapshot (EXPORT_SNAPSHOT) so the caller can copy
+// existing rows consistently before streaming. The exported snapshot stays valid only
+// while this replication connection is idle — i.e. until START_REPLICATION — so the caller
+// must run the snapshot before Stream.
+func EnsureSlot(ctx context.Context, conn *pgconn.PgConn, slotName string) (SlotInfo, error) {
+	res, err := pglogrepl.CreateReplicationSlot(ctx, conn, slotName, outputPlugin,
+		pglogrepl.CreateReplicationSlotOptions{Temporary: false, SnapshotAction: "EXPORT_SNAPSHOT"})
 	if err == nil {
-		return true, nil
+		lsn, perr := pglogrepl.ParseLSN(res.ConsistentPoint)
+		if perr != nil {
+			return SlotInfo{}, fmt.Errorf("parse consistent point %q: %w", res.ConsistentPoint, perr)
+		}
+		return SlotInfo{Created: true, ConsistentPoint: lsn, SnapshotName: res.SnapshotName}, nil
 	}
 
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == pgErrDuplicateObject {
-		// Slot already exists from a previous run — reuse it.
-		return false, nil
+		// Slot already exists from a previous run — reuse it (no snapshot available).
+		return SlotInfo{Created: false}, nil
 	}
-	return false, fmt.Errorf("create replication slot %q: %w", slotName, err)
+	return SlotInfo{}, fmt.Errorf("create replication slot %q: %w", slotName, err)
 }
 
 // Stream issues START_REPLICATION, which switches the socket into the bidirectional
