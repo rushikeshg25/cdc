@@ -48,7 +48,7 @@ func Parse(args []string) (Config, error) {
 // splitTables parses a comma-separated table list, trimming whitespace and dropping empties.
 func splitTables(s string) []string {
 	var out []string
-	for _, part := range strings.Split(s, ",") {
+	for part := range strings.SplitSeq(s, ",") {
 		if t := strings.TrimSpace(part); t != "" {
 			out = append(out, t)
 		}

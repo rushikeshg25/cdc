@@ -11,6 +11,7 @@ import (
 
 	"github.com/rushikeshg25/cdc/internal/checkpoint"
 	"github.com/rushikeshg25/cdc/internal/config"
+	"github.com/rushikeshg25/cdc/internal/publication"
 	"github.com/rushikeshg25/cdc/internal/replication"
 	"github.com/rushikeshg25/cdc/internal/sink"
 	"github.com/rushikeshg25/cdc/internal/snapshot"
@@ -49,6 +50,14 @@ func run(cfg config.Config) error {
 	}
 	fmt.Printf("system: id=%s timeline=%d db=%s currentWAL=%s\n",
 		sys.SystemID, sys.Timeline, sys.DBName, sys.XLogPos)
+
+	// Scope the publication to --tables (if given) before creating the slot/streaming.
+	if err := publication.Ensure(ctx, cfg.DSN, cfg.Publication, cfg.Tables); err != nil {
+		return err
+	}
+	if len(cfg.Tables) > 0 {
+		fmt.Printf("publication %q scoped to %v\n", cfg.Publication, cfg.Tables)
+	}
 
 	slotInfo, err := replication.EnsureSlot(ctx, conn, cfg.SlotName)
 	if err != nil {
