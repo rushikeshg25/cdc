@@ -20,6 +20,8 @@ func New(o Options) (Sink, error) {
 		return NewFile(o.FilePath)
 	case "stdout":
 		return NewStdout(), nil
+	case "http":
+		return NewHTTP(o.HTTPURL)
 	default:
 		return nil, fmt.Errorf("unknown sink %q", o.Kind)
 	}
