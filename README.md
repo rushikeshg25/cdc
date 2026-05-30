@@ -114,14 +114,35 @@ make kafka-consume TOPIC=cdc.public.users
 go run ./cmd/cdc --sink http --http-url http://localhost:8080/events
 ```
 
+## Observability
+
+Logs are structured (`log/slog`); `--verbose` switches to debug level.
+
+Enable Prometheus metrics with `--metrics-addr`:
+
+```sh
+go run ./cmd/cdc --metrics-addr :9100
+curl -s localhost:9100/metrics | grep '^cdc_'
+```
+
+| Metric | Type | Meaning |
+|--------|------|---------|
+| `cdc_events_total{op}` | counter | events emitted, by op (insert/update/delete/truncate/read) |
+| `cdc_sink_errors_total` | counter | sink write/flush failures |
+| `cdc_replication_lag_bytes` | gauge | server WAL end minus our processed position |
+
 ## Layout
 
 ```
 cmd/cdc/             entrypoint: flags, signal handling, wiring
-internal/config      DSN, slot name, publication name, output path
-internal/replication connection, slot management, CopyBoth loop, LSN feedback
+internal/config      flags: DSN, slot, publication, output, tables, sink, metrics
+internal/replication connection, slot+snapshot export, CopyBoth loop, LSN feedback
 internal/decode      pgoutput messages → ChangeEvent, relation cache
 internal/event       ChangeEvent type + JSON schema
-internal/sink        Sink interface + JSONL file writer
+internal/snapshot    consistent initial copy (SET TRANSACTION SNAPSHOT)
+internal/checkpoint  durable LSN store for resume across restarts
+internal/publication manage a FOR TABLE publication (table filtering)
+internal/sink        Sink interface + file/stdout/http/kafka implementations
+internal/metrics     Prometheus metrics + /metrics server
 scripts/             pg setup + demo workload
 ```
